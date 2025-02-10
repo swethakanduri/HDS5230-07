@@ -1,0 +1,114 @@
+---
+title: "week 3"
+author: "Swetha Kanduri"
+date: "2025-02-09"
+output: html_document
+---
+
+
+```{r}
+# Load necessary libraries
+library(readr)
+library(microbenchmark)
+
+# Load the clinics dataset
+clinics <- read_csv("/Users/swetha/Downloads/clinics.csv") 
+
+# Check column names to confirm correct data extraction
+print(colnames(clinics))
+
+# Ensure latitude and longitude columns are numeric
+latitude <- as.numeric(clinics$locLat)
+longitude <- as.numeric(clinics$locLong)
+
+# Create a data frame with extracted values
+clinics_data <- data.frame(latitude, longitude)
+
+# Display the first few rows
+print(head(clinics_data))
+
+# Define the Haversine function
+haversine <- function(lat1, lon1, lat2, lon2) {
+  MILES <- 3959
+  lat1 <- lat1 * pi / 180
+  lon1 <- lon1 * pi / 180
+  lat2 <- lat2 * pi / 180
+  lon2 <- lon2 * pi / 180
+  
+  dlat <- lat2 - lat1
+  dlon <- lon2 - lon1
+  a <- sin(dlat / 2)^2 + cos(lat1) * cos(lat2) * sin(dlon / 2)^2
+  c <- 2 * asin(sqrt(a))
+  
+  return(MILES * c)
+}
+
+# 1. For-loop-based approach
+# This approach calculates pairwise distances using nested loops.
+# It iterates through each clinic and calculates the distance to every other clinic.
+# This method has O(n^2) complexity and is the slowest.
+compute_distances_loop <- function(clinics) {
+  num_points <- nrow(clinics)
+  distance_matrix <- matrix(0, nrow = num_points, ncol = num_points)
+  for (i in 1:num_points) {
+    for (j in 1:num_points) {
+      distance_matrix[i, j] <- haversine(clinics$latitude[i], clinics$longitude[i],
+                                         clinics$latitude[j], clinics$longitude[j])
+    }
+  }
+  return(distance_matrix)
+}
+
+# 2. Apply-based approach (row-wise)
+# This approach uses the apply function to calculate distances row-by-row.
+# It applies the Haversine function to every row in the dataset,
+# avoiding explicit loops but still being inefficient for large datasets.
+compute_distances_apply <- function(clinics) {
+  num_points <- nrow(clinics)
+  distance_matrix <- matrix(0, nrow = num_points, ncol = num_points)
+  for (i in 1:num_points) {
+    distance_matrix[i, ] <- apply(clinics, 1, function(row) {
+      haversine(clinics$latitude[i], clinics$longitude[i], row["latitude"], row["longitude"])
+    })
+  }
+  return(distance_matrix)
+}
+
+# 3. Vectorized approach
+#This approach uses matrix operations to calculate pairwise distances.
+# for all clinics simultaneously, avoiding explicit loops.
+# It leverages vectorized calculations, making it the most efficient approach.
+compute_distances_vectorized <- function(clinics) {
+  lat1 <- matrix(clinics$latitude, nrow = nrow(clinics), ncol = nrow(clinics), byrow = TRUE)
+  lon1 <- matrix(clinics$longitude, nrow = nrow(clinics), ncol = nrow(clinics), byrow = TRUE)
+  lat2 <- t(lat1)
+  lon2 <- t(lon1)
+  
+  MILES <- 3959
+  lat1 <- lat1 * pi / 180
+  lon1 <- lon1 * pi / 180
+  lat2 <- lat2 * pi / 180
+  lon2 <- lon2 * pi / 180
+  
+  dlat <- lat2 - lat1
+  dlon <- lon2 - lon1
+  a <- sin(dlat / 2)^2 + cos(lat1) * cos(lat2) * sin(dlon / 2)^2
+  c <- 2 * asin(sqrt(a))
+  distance_matrix <- MILES * c
+  return(distance_matrix)
+}
+
+# Profile execution times for each approach
+results <- microbenchmark(
+  ForLoop = compute_distances_loop(clinics_data),
+  Apply = compute_distances_apply(clinics_data),
+  Vectorized = compute_distances_vectorized(clinics_data),
+  times = 5
+)
+
+# Print profiling results
+print(results)
+
+
+```
+
