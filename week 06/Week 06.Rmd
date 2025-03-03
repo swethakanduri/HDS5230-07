@@ -1,0 +1,179 @@
+---
+title: "Week 6 Genetic Algorithm"
+author: "Swetha Kanduri"
+date: "2025-03-03"
+output: html_document
+---
+
+```{r}
+#load requied libraries
+library(data.table)
+library(geosphere)
+library(GA)
+library(purrr)
+library(sf)
+```
+
+
+```{r}
+
+## Load the population data
+pop.data <- data.table::fread("Mo_pop_Sim.csv")
+str(pop.data)
+frac <- 0.0001
+small.data <- pop.data[sample(1:nrow(pop.data),
+                               size = round(nrow(pop.data) * frac),
+                               replace = F), ## extract a sample of randomlychosen 1% rows
+                        ]  ## and choose all columns
+
+## Load the FQHC data
+data_path <- 'MO_2018_Federally_Qualified_Health_Center_Locations'
+fqhc.data <- data.table(as.data.frame(st_read(data_path,
+                     'MO_2018_Federally_Qualified_Health_Center_Locations')))
+str(fqhc.data)
+```
+
+
+```{r}
+## Extract FQHC coordinates
+## Define search radius
+fqhc.coordinates <- fqhc.data[, .(Longitude, Latitude)]
+radius_in_miles <- 30
+radius_in_meters <- radius_miles * 1609.34
+```
+
+The code extracts the longitude and latitude of FQHC locations and defines a 30-mile search radius, converting it to meters for accurate geospatial calculations. This will be used later to determine which FQHC locations serves the most residents
+
+
+```{r}
+# Method 1
+# Function to count population within radius of an FQHC
+count_residents_in_radius <- function(fqhc_idx) {
+  fqhc_longitude <- fqhc.coordinates$Longitude[fqhc_idx]
+  fqhc_latitude <- fqhc.coordinates$Latitude[fqhc_idx]
+  
+  # Calculate distances from this FQHC to all sampled residents
+  distances <- distHaversine(
+    matrix(c(fqhc_longitude, fqhc_latitude), ncol = 2),
+    as.matrix(small.data[, .(long, lat)])
+  )
+  
+  # Count how many points fall within the radius
+  sum(distances <= radius_in_meters)
+}
+
+# Apply the function to each FQHC
+resident_counts <- sapply(1:nrow(fqhc.coordinates), count_residents_in_radius)
+
+# Create a data table with results
+fqhc_density_results <- data.table(
+  FQHC_ID = 1:nrow(fqhc.coordinates),
+  Facility = fqhc.data$Facility,
+  City = fqhc.data$City,
+  residents_Within_30mi = resident_counts
+)
+
+# Sort by population count (descending)
+fqhc_density_results <- fqhc_density_results[order(-residents_Within_30mi)]
+```
+
+This function calculates the population density around each FQHC, using the Haversine formula to measure distances. It then counts how many residents fall within a 30-mile radius, sorts the results, and identifies the most densely populated FQHC locations, which are best suited for mental health services.
+
+
+
+```{r}
+# Method 2: Average distance to population
+# Function to calculate average distance from an FQHC to all population points
+calculate_avg_resident_distance <- function(fqhc_idx) {
+  fqhc_longitude <- fqhc.coordinates$Longitude[fqhc_idx]
+  fqhc_latitude <- fqhc.coordinates$Latitude[fqhc_idx]
+#Compute distances from this FQHC to all sampled residents
+  distances <- distHaversine(
+    matrix(c(fqhc_longitude, fqhc_latitude), ncol = 2),
+    as.matrix(small.data[, .(long, lat)])
+  )
+  # Convert meters to miles and return average
+  mean(distances) / 1609.34
+}
+#Select the top 30 FQHCs based on population density
+top_fqhcs_can <- fqhc_density_results$FQHC_ID[1:30]
+avg_resident_distances <- sapply(top_fqhcs_can, calculate_avg_resident_distance)
+
+# Create a data table with results
+fqhc_distance_results <- data.table(
+  FQHC_ID = top_fqhcs_can,
+  Facility = fqhc.data$Facility[top_fqhcs_can],
+  City = fqhc.data$City[top_fqhcs],
+  Avg_Distance_Miles = avg_resident_distances
+)
+
+# Sort by average distance (ascending)
+fqhc_distance_results <- fqhc_distance_results[order(Avg_Distance_Miles)]
+
+# Normalize each metric to 0-1 scale
+fqhc_combined_scores <- data.table(
+  FQHC_ID = fqhc_distance_results$FQHC_ID,
+  Facility = fqhc_distance_results$Facility,
+  City = fqhc_distance_results$City,
+  
+  # Normalize population density score
+  Population_Score = fqhc_density_results[match(fqhc_distance_results$FQHC_ID, fqhc_density_results$FQHC_ID), 
+                                    residents_Within_30mi / max(residents_Within_30mi)],
+  Distance_Score = 1 - (fqhc_distance_results$Avg_Distance_Miles / max(fqhc_distance_results$Avg_Distance_Miles))
+)
+
+# Compute Calculate combined score
+fqhc_combined_scores[, Combined_Score := (Population_Score + Distance_Score) / 2]
+fqhc_combined_scores <- fqhc_combined_results[order(-Combined_Score)]
+
+top_8_fqhcs <- fqhc_combined_scores[1:8]
+print(top_8_fqhcs)
+```
+
+The results identify the top 8 FQHCs in Missouri best suited for introducing specialized mental health services
+, based on a balance between population density and accessibility. The Population Score represents the proportion of residents within a 30-mile radius, while the Distance Score prioritizes locations closer to population centers. The Combined Score, averaging both metrics, ensures fair ranking. The top locations, such as COMTREA High Ridge (Medical) and COMTREA Northwest (Behavioral Health), serve the highest number of residents, while facilities with lower rankings, like Betty Jean Kerr People's Health Center, Inc., have higher average distances, reducing accessibility. The selection process ensures maximum coverage while minimizing travel burden, making these locations ideal for mental health service expansion.
+
+```{r}
+# Define fitness function for the  GA
+fitness_fun <- function(selected_indices) {
+  selected_Fqhcs <- fqhc_combined_scores[selected_indices, ]
+  total_fitn <- sum(selected_Fqhcs$Combine_Score)
+  
+  return(total_fitn)
+}
+
+
+# Run Genetic Algorithm
+set.seed(123)
+result_ga <- ga(
+  type = "permutation",
+  fitness = function(indices) fitness_fun(indices),
+  lower = 1,
+  upper = nrow(fqhc_combined_scores),
+  popSize = 50,  
+  maxiter = 100,  
+  run = 50, 
+  pmutation = 0.2, 
+  elitism = 5, 
+  parallel = FALSE, 
+  names = fqhc_combined_scores$Facility
+)
+
+# best solution
+best_solution <- result_ga@solution[1, ]
+optimal_Fqhcs <- fqhc_combined_scores[best_solution, ]
+
+# Print the optimal set of FQHCs
+print(optimal_Fqhcs)
+```
+
+
+
+To determine the relative fitness of a location, we can evaluate two different approaches: average closeness to all residences and population density within a 30-mile radius. The first approach identifies locations that are centrally positioned relative to all residences, ensuring the shortest average travel distance for the entire population. However, this method assumes that all individuals travel equally  to any healthcare facility, regardless of population distribution. This assumption may not reflect real-world behavior, as people tend to seek healthcare services within  a reasonable travel range , and some areas may have higher healthcare demand due to larger populations.
+
+A more practical approach is to consider  population density within a 30-mile radius  when selecting FQHC locations. This method prioritizes facilities located in areas  with the highest concentration of residents , ensuring that mental health services are introduced where they can serve the most people . The key assumption here is that  proximity to a high number of people increases accessibility and impact , making services more effective in areas with higher demand. This method also accounts for  variability in population distribution, preventing facilities from being placed in  low-density regions  where fewer residents would benefit.
+
+For this reason, the  population density approach  is the more suitable choice for determining the fitness of an FQHC location. The  fitness function  for this approach would be calculated as the  total number of residents within a 30-mile radius  of a facility. Mathematically, this can be represented as  counting all individuals who fall within the service radius of each FQHC. The  goal is to maximize this metric , ensuring that selected locations have  the highest population coverage . By using this method, we can optimize the placement of new mental health services to  maximize accessibility and improve community health outcomes.
+
+
+
