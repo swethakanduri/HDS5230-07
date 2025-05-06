@@ -1,0 +1,33 @@
+
+Cancer Risk Prediction – Configuration Reference
+
+This file provides centralized configuration details used in the application.
+Although the app currently hardcodes these paths, this file is included for
+project structure compliance and future modularization.
+
+------------------------------
+Model and Encoder File Paths:
+------------------------------
+Model File          : src/cancer_model.pkl
+Scaler File         : src/scaler.pkl
+BMI Encoder File    : src/bmi_encoder.pkl
+Age Encoder File    : src/age_group_encoder.pkl
+
+------------------------------
+Input Features:
+------------------------------
+Numerical Features  : Age, BMI, PhysicalActivity, AlcoholIntake
+Categorical Features: Gender, Smoking, GeneticRisk, CancerHistory
+Engineered Features : BMI_Category, Age_Group
+
+------------------------------
+Deployment Settings:
+------------------------------
+Mode  : Development
+Host  : 127.0.0.1
+Port  : 5000
+Debug : True
+
+Note:
+This file is not programmatically imported, but documents configuration for
+clarity and maintainability as per project submission requirements.
